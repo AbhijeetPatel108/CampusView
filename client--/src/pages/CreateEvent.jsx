@@ -1,0 +1,779 @@
+import React, { useState } from 'react';
+import axios from 'axios';
+import { API_URL } from '../config/api';
+import { useNavigate } from 'react-router-dom';
+import { EVENT_VENUES } from '../constants/eventVanues';
+import { PROGRAM_LABELS, PROGRAM_OPTIONS } from '../constants/programs';
+import { MediaType } from '../types/index';
+
+const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'];
+
+const CreateEvent = () => {
+    const navigate = useNavigate();
+    const [formData, setFormData] = useState({
+        title: '',
+        description: '',
+        venue: '',
+        startTime: '',
+        endTime: '',
+        totalSeats: '',
+        entryFee: 0,
+        imageUrl: '',
+        requiredFields: [],
+        customFields: [],
+        registrationDeadline: '',
+        createdBy: JSON.parse(localStorage.getItem('user'))?._id,
+        clubId: JSON.parse(localStorage.getItem('user'))?.clubId,
+        allowedPrograms: ['BTECH', 'MTECH', 'OTHER'],
+        allowedYears: [],
+        showWinner: false,
+        provideCertificate: false,
+    });
+    const [sponsors, setSponsors] = useState([]);
+    const [media, setMedia] = useState([]);
+    const [sponsorErrors, setSponsorErrors] = useState([]);
+    const [mediaErrors, setMediaErrors] = useState([]);
+    const [isFree, setIsFree] = useState(true);
+    const [isUnlimited, setIsUnlimited] = useState(false);
+    const [allYears, setAllYears] = useState(true);
+    const [error, setError] = useState('');
+
+    const handleChange = (e) => {
+        setFormData({ ...formData, [e.target.name]: e.target.value });
+    };
+
+    const handleImageFileChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.size > 5 * 1024 * 1024) {
+                setError('Image file size should be under 5MB.');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setFormData(prev => ({ ...prev, imageUrl: reader.result }));
+                setError('');
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleProgramToggle = (prog) => {
+        setFormData(prev => {
+            const current = prev.allowedPrograms;
+            if (current.includes(prog)) {
+                if (current.length <= 1) return prev; // keep at least one
+                return { ...prev, allowedPrograms: current.filter(p => p !== prog) };
+            }
+            return { ...prev, allowedPrograms: [...current, prog] };
+        });
+    };
+
+    const handleYearToggle = (year) => {
+        setFormData(prev => {
+            const current = prev.allowedYears;
+            if (current.includes(year)) {
+                return { ...prev, allowedYears: current.filter(y => y !== year) };
+            }
+            return { ...prev, allowedYears: [...current, year] };
+        });
+    };
+
+    // ── Sponsor Handlers ───────────────────────────────────────────────
+    const addSponsor = () => {
+        setSponsors(prev => [...prev, { name: '', logoUrl: '', websiteUrl: '' }]);
+        setSponsorErrors(prev => [...prev, {}]);
+    };
+
+    const removeSponsor = (index) => {
+        setSponsors(prev => prev.filter((_, i) => i !== index));
+        setSponsorErrors(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const updateSponsor = (index, field, value) => {
+        setSponsors(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], [field]: value };
+            return updated;
+        });
+    };
+
+    // ── Media Handlers ─────────────────────────────────────────────────
+    const addMedia = () => {
+        setMedia(prev => [...prev, { url: '', type: MediaType.IMAGE }]);
+        setMediaErrors(prev => [...prev, {}]);
+    };
+
+    const removeMedia = (index) => {
+        setMedia(prev => prev.filter((_, i) => i !== index));
+        setMediaErrors(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const updateMedia = (index, field, value) => {
+        setMedia(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], [field]: value };
+            return updated;
+        });
+    };
+
+    // ── Validation ─────────────────────────────────────────────────────
+    const URL_PATTERN = /^https?:\/\/.+/;
+
+    const validateSponsorsAndMedia = () => {
+        let valid = true;
+        const newSponsorErrors = sponsors.map(s => {
+            const errs = {};
+            if (!s.name.trim()) errs.name = 'Sponsor name is required.';
+            if (!URL_PATTERN.test(s.logoUrl)) errs.logoUrl = 'Logo URL must be a valid URL (https://...).';
+            if (Object.keys(errs).length) valid = false;
+            return errs;
+        });
+        const newMediaErrors = media.map(m => {
+            const errs = {};
+            if (!URL_PATTERN.test(m.url)) errs.url = 'Media URL must be a valid URL (https://...).';
+            if (Object.keys(errs).length) valid = false;
+            return errs;
+        });
+        setSponsorErrors(newSponsorErrors);
+        setMediaErrors(newMediaErrors);
+        return valid;
+    };
+
+    // ── Custom Fields Handlers ──────────────────────────────────────────
+    const addCustomField = () => {
+        setFormData(prev => ({
+            ...prev,
+            customFields: [...prev.customFields, { label: '', type: 'text', required: false, options: [] }]
+        }));
+    };
+
+    const removeCustomField = (index) => {
+        setFormData(prev => ({
+            ...prev,
+            customFields: prev.customFields.filter((_, i) => i !== index)
+        }));
+    };
+
+    const updateCustomField = (index, field, value) => {
+        setFormData(prev => {
+            const updated = [...prev.customFields];
+            updated[index] = { ...updated[index], [field]: value };
+            // Clear options if type is not select
+            if (field === 'type' && value !== 'select') {
+                updated[index].options = [];
+            }
+            return { ...prev, customFields: updated };
+        });
+    };
+
+    const updateCustomFieldOption = (fieldIndex, optIndex, value) => {
+        setFormData(prev => {
+            const updated = [...prev.customFields];
+            const opts = [...(updated[fieldIndex].options || [])];
+            opts[optIndex] = value;
+            updated[fieldIndex] = { ...updated[fieldIndex], options: opts };
+            return { ...prev, customFields: updated };
+        });
+    };
+
+    const addOptionToField = (fieldIndex) => {
+        setFormData(prev => {
+            const updated = [...prev.customFields];
+            updated[fieldIndex] = { ...updated[fieldIndex], options: [...(updated[fieldIndex].options || []), ''] };
+            return { ...prev, customFields: updated };
+        });
+    };
+
+    const removeOptionFromField = (fieldIndex, optIndex) => {
+        setFormData(prev => {
+            const updated = [...prev.customFields];
+            updated[fieldIndex] = { ...updated[fieldIndex], options: updated[fieldIndex].options.filter((_, i) => i !== optIndex) };
+            return { ...prev, customFields: updated };
+        });
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const start = new Date(formData.startTime);
+        const end = new Date(formData.endTime);
+
+        if (start >= end) {
+            setError('End time must be after start time.');
+            return;
+        }
+
+        if (formData.registrationDeadline && new Date(formData.registrationDeadline) > start) {
+            setError('Registration deadline cannot be after event start time.');
+            return;
+        }
+
+        if (!validateSponsorsAndMedia()) {
+            setError('Please fix the sponsor and media errors before submitting.');
+            return;
+        }
+
+        const payload = {
+            ...formData,
+            entryFee: Number(formData.entryFee || 0),
+            totalSeats: isUnlimited ? 0 : Number(formData.totalSeats),
+            registrationDeadline: formData.registrationDeadline ? formData.registrationDeadline : null,
+            allowedYears: allYears ? [] : formData.allowedYears,
+            sponsors: sponsors.map(s => ({ name: s.name, logoUrl: s.logoUrl, websiteUrl: s.websiteUrl || undefined })),
+            media: media.map(m => ({ url: m.url, type: m.type })),
+        };
+
+        try {
+            const res = await axios.post(`${API_URL}/api/events`, payload);
+            navigate(`/event/${res.data.slug}`);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Failed to create event');
+        }
+    };
+
+    const inputCls =
+        'w-full px-4 py-3 border-2 border-neutral-200 rounded-sm focus:border-orange-600 focus:outline-none transition-colors';
+    const labelCls =
+        'block text-sm font-bold text-black mb-2';
+
+    return (
+        <div className="min-h-screen bg-neutral-50 py-12 px-4">
+            <div className="max-w-4xl mx-auto">
+                {/* Header */}
+                <div className="mb-8">
+                    <button
+                        onClick={() => navigate(-1)}
+                        className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-black hover:text-orange-600 transition-colors mb-4"
+                    >
+                        <i className="ri-arrow-left-line" /> Back
+                    </button>
+                    <h1 className="text-4xl font-black text-black">Create New Event</h1>
+                    <p className="text-neutral-600 mt-2">Fill in the details to publish a new event</p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="bg-white border-2 border-gray-300 rounded-sm p-8 space-y-6 ">
+                    {error && (
+                        <div className="flex items-center gap-2 bg-red-50 border-2 border-red-400 text-red-700 text-[13px] font-bold px-4 py-3 rounded-sm">
+                            <i className="ri-error-warning-line text-lg" />
+                            {error}
+                        </div>
+                    )}
+
+                    {/* Event Title */}
+                    <div>
+                        <label className={labelCls}>Event Title <span className="text-orange-600">*</span></label>
+                        <input type="text" name="title" required className={inputCls}
+                            value={formData.title} onChange={handleChange} placeholder="Enter event title" />
+                    </div>
+
+                    {/* Description */}
+                    <div>
+                        <label className={labelCls}>Description</label>
+                        <textarea name="description" rows="4" className={`${inputCls} resize-y`}
+                            value={formData.description} onChange={handleChange} placeholder="Describe your event..." />
+                    </div>
+
+                    <div>
+                        <label className={labelCls}>Event Poster / Banner Image</label>
+                        <div className="space-y-3">
+                            {/* File Upload Option */}
+                            <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+                                <label className="flex-1 cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-neutral-300 hover:border-orange-600 bg-neutral-50 px-4 py-3 rounded-sm transition-colors text-xs font-bold text-neutral-700">
+                                    <i className="ri-upload-2-line text-lg text-orange-600" />
+                                    Choose Image File from Folder
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleImageFileChange}
+                                        className="hidden"
+                                    />
+                                </label>
+                            </div>
+
+                            <p className="text-[11px] font-bold text-neutral-400 uppercase tracking-widest text-center">OR PASTE URL</p>
+
+                            {/* Image URL Input */}
+                            <input
+                                type="url"
+                                name="imageUrl"
+                                placeholder="https://example.com/event-image.jpg"
+                                className={inputCls}
+                                value={formData.imageUrl}
+                                onChange={handleChange}
+                            />
+                        </div>
+
+                        {/* Image Preview */}
+                        {formData.imageUrl && (
+                            <div className="mt-4 relative w-48 aspect-[4/5] rounded-lg overflow-hidden border-2 border-neutral-200 group">
+                                <img
+                                    src={formData.imageUrl}
+                                    alt="Event Poster Preview"
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                        e.target.onerror = null;
+                                        e.target.src = "/CLUBSETU.png";
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData(prev => ({ ...prev, imageUrl: '' }))}
+                                    className="absolute top-2 right-2 bg-red-600 text-white p-1.5 rounded-full text-xs hover:bg-red-700 transition-colors shadow-md cursor-pointer"
+                                    title="Remove Image"
+                                >
+                                    <i className="ri-close-line" />
+                                </button>
+                                <span className="absolute bottom-2 left-2 bg-black/70 text-white text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded">
+                                    Selected Image
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Venue */}
+                    <div>
+                        <label className={labelCls}>Venue <span className="text-orange-600">*</span></label>
+                        <select name="venue" required className={inputCls} value={formData.venue} onChange={handleChange}>
+                            <option value="">Select Venue</option>
+                            {EVENT_VENUES.map((venue) => (
+                                <option key={venue} value={venue}>{venue}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Start / End Time */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label className={labelCls}>Start Time <span className="text-orange-600">*</span></label>
+                            <input type="datetime-local" name="startTime" required className={inputCls}
+                                value={formData.startTime} onChange={handleChange} />
+                        </div>
+                        <div>
+                            <label className={labelCls}>End Time <span className="text-orange-600">*</span></label>
+                            <input type="datetime-local" name="endTime" required className={inputCls}
+                                value={formData.endTime} onChange={handleChange} />
+                        </div>
+                    </div>
+
+                    {/* Registration Deadline */}
+                    <div>
+                        <label className={labelCls}>Registration Deadline</label>
+                        <input type="datetime-local" name="registrationDeadline" className={inputCls}
+                            value={formData.registrationDeadline} onChange={handleChange} />
+                        <p className="text-xs text-neutral-500 mt-1">Optional: If left blank, registrations stay open until start time.</p>
+                    </div>
+
+                    {/* Total Seats */}
+                    <div>
+                        <label className={labelCls}>Total Seats <span className="text-orange-600">*</span></label>
+                        <div className="flex items-center gap-4 mb-3">
+                            <label className="inline-flex items-center cursor-pointer gap-2">
+                                <input type="checkbox" className="w-4 h-4 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+                                    checked={isUnlimited} onChange={() => {
+                                        setIsUnlimited(!isUnlimited);
+                                        if (!isUnlimited) setFormData({ ...formData, totalSeats: '' });
+                                    }} />
+                                <span className="text-sm font-medium text-neutral-700">Unlimited Seats</span>
+                            </label>
+                        </div>
+                        {!isUnlimited && (
+                            <input type="number" name="totalSeats" required min="1" className={inputCls}
+                                value={formData.totalSeats} onChange={handleChange} placeholder="Number of seats" />
+                        )}
+                    </div>
+
+                    {/* Entry Fee */}
+                   <div>
+  <label className={labelCls}>Entry Fee</label>
+  <div className="flex items-center gap-6 mb-3">
+    <label className="inline-flex items-center cursor-pointer">
+      <input
+        type="radio"
+        className="w-4 h-4 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+        name="feeType"
+        checked={isFree}
+        onChange={() => {
+          setIsFree(true);
+          setFormData({ ...formData, entryFee: 0 });
+        }}
+      />
+      <span className="ml-2 text-sm font-medium text-neutral-700">Free</span>
+    </label>
+    <label className="inline-flex items-center cursor-not-allowed opacity-50">
+      <input
+        type="radio"
+        className="w-4 h-4 text-orange-600 border-neutral-300 focus:ring-orange-600"
+        name="feeType"
+        checked={!isFree}
+        disabled // 🔒 disables the Paid option
+        onChange={() => setIsFree(false)}
+      />
+      <span className="ml-2 text-sm font-medium text-neutral-700">Paid(Coming Soon)</span>
+    </label>
+  </div>
+
+  {!isFree && (
+    <input
+      type="number"
+      name="entryFee"
+      min="1"
+      placeholder="Enter amount in ₹"
+      className={inputCls}
+      value={formData.entryFee}
+      onChange={handleChange}
+    />
+  )}
+</div>
+
+
+                    {/* Allowed Programs */}
+                    <div>
+                        <label className={labelCls}>Allowed Programs</label>
+                        <p className="text-xs text-neutral-500 mb-3">Select which programs can register for this event</p>
+                        <div className="flex items-center gap-6">
+                            {PROGRAM_OPTIONS.map((prog) => (
+                                <label key={prog} className="inline-flex items-center cursor-pointer gap-2">
+                                    <input type="checkbox" className="w-4 h-4 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+                                        checked={formData.allowedPrograms.includes(prog)}
+                                        onChange={() => handleProgramToggle(prog)} />
+                                    <span className="text-sm font-medium text-neutral-700">{PROGRAM_LABELS[prog]}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Allowed Years */}
+                    <div>
+                        <label className={labelCls}>Allowed Years</label>
+                        <div className="flex items-center gap-4 mb-3">
+                            <label className="inline-flex items-center cursor-pointer gap-2">
+                                <input type="checkbox" className="w-4 h-4 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+                                    checked={allYears} onChange={() => {
+                                        setAllYears(!allYears);
+                                        if (!allYears) setFormData({ ...formData, allowedYears: [] });
+                                    }} />
+                                <span className="text-sm font-medium text-neutral-700">Allow All Years</span>
+                            </label>
+                        </div>
+                        {!allYears && (
+                            <div className="flex flex-wrap gap-3">
+                                {YEARS.map(year => (
+                                    <label key={year} className="inline-flex items-center cursor-pointer gap-2">
+                                        <input type="checkbox" className="w-4 h-4 text-orange-600 border-neutral-300 rounded focus:ring-orange-600"
+                                            checked={formData.allowedYears.includes(year)}
+                                            onChange={() => handleYearToggle(year)} />
+                                        <span className="text-sm font-medium text-neutral-700">{year}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Show Winners Toggle */}
+                    <div className="bg-orange-50 border-2 border-orange-200 p-4 rounded-sm">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                name="showWinner"
+                                checked={formData.showWinner}
+                                onChange={(e) => setFormData({ ...formData, showWinner: e.target.checked })}
+                                className="w-5 h-5 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+                            />
+                            <div>
+                                <span className={labelCls + ' mb-0'}>Show Winners / Results</span>
+                                <p className="text-xs text-neutral-500">If enabled, winners will be shown on the event card after the event ends.</p>
+                            </div>
+                        </label>
+                    </div>
+
+                    {/* Provide Certificate Toggle */}
+                    <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-sm">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                name="provideCertificate"
+                                checked={formData.provideCertificate}
+                                onChange={(e) => setFormData({ ...formData, provideCertificate: e.target.checked })}
+                                className="w-5 h-5 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600"
+                            />
+                            <div>
+                                <span className={labelCls + ' mb-0'}>Provide Certificates</span>
+                                <p className="text-xs text-neutral-500">If enabled, participants can download their certificates once the event ends. <span className="font-bold text-blue-700">You can design the certificate template anytime before the event ends.</span></p>
+                            </div>
+                        </label>
+                    </div>
+
+                    {/* Event Image URL */}
+                   
+
+                    {/* Required Student Information */}
+                    <div>
+                        <label className={labelCls}>Required Student Information</label>
+                        <p className="text-xs text-neutral-500 mb-3">Select which profile fields students must complete before registering</p>
+                        <div className="space-y-2">
+                            {[
+                                { value: 'githubProfile', label: 'GitHub Profile' },
+                                { value: 'linkedinProfile', label: 'LinkedIn Profile' },
+                                { value: 'xProfile', label: 'X (Twitter) Profile' },
+                                { value: 'portfolioUrl', label: 'Portfolio URL' }
+                            ].map(field => (
+                                <label key={field.value} className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" value={field.value}
+                                        checked={formData.requiredFields.includes(field.value)}
+                                        onChange={(e) => {
+                                            const { checked } = e.target;
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                requiredFields: checked
+                                                    ? [...prev.requiredFields, field.value]
+                                                    : prev.requiredFields.filter(f => f !== field.value)
+                                            }));
+                                        }}
+                                        className="w-4 h-4 accent-orange-600 cursor-pointer  border-neutral-300 rounded focus:ring-orange-600" />
+                                    <span className="text-sm text-neutral-700">{field.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Custom Registration Fields Builder */}
+                    <div>
+                        <label className={labelCls}>
+                            Custom Registration Fields
+                        </label>
+                        <p className="text-xs text-neutral-500 mb-4">Add custom fields that students must fill during registration (like Google Forms)</p>
+
+                        <div className="space-y-4">
+                            {formData.customFields.map((cf, idx) => (
+                                <div key={idx} className="border-2 border-neutral-200 rounded-sm p-4 relative bg-neutral-50">
+                                    {/* Delete button */}
+                                    <button
+                                        type="button"
+                                        onClick={() => removeCustomField(idx)}
+                                        className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded-sm transition-colors"
+                                        title="Remove field"
+                                    >
+                                        <i className="ri-delete-bin-line text-lg" />
+                                    </button>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-10">
+                                        {/* Label */}
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Field Label <span className="text-orange-600">*</span></label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. Team Name, GitHub Repo..."
+                                                value={cf.label}
+                                                onChange={(e) => updateCustomField(idx, 'label', e.target.value)}
+                                                className={inputCls}
+                                                required
+                                            />
+                                        </div>
+                                        {/* Type */}
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Field Type</label>
+                                            <select
+                                                value={cf.type}
+                                                onChange={(e) => updateCustomField(idx, 'type', e.target.value)}
+                                                className={inputCls}
+                                            >
+                                                <option value="text">Text</option>
+                                                <option value="url">Link / URL</option>
+                                                <option value="textarea">Long Text</option>
+                                                <option value="select">Dropdown</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Required toggle */}
+                                    <label className="inline-flex items-center gap-2 mt-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={cf.required}
+                                            onChange={(e) => updateCustomField(idx, 'required', e.target.checked)}
+                                            className="w-4 h-4 text-orange-600 border-neutral-300 rounded focus:ring-orange-600"
+                                        />
+                                        <span className="text-sm text-neutral-600">Required</span>
+                                    </label>
+
+                                    {/* Dropdown Options */}
+                                    {cf.type === 'select' && (
+                                        <div className="mt-3 pl-4 border-l-2 border-orange-300">
+                                            <p className="text-xs font-bold text-neutral-600 mb-2">Dropdown Options</p>
+                                            {(cf.options || []).map((opt, optIdx) => (
+                                                <div key={optIdx} className="flex items-center gap-2 mb-2">
+                                                    <input
+                                                        type="text"
+                                                        placeholder={`Option ${optIdx + 1}`}
+                                                        value={opt}
+                                                        onChange={(e) => updateCustomFieldOption(idx, optIdx, e.target.value)}
+                                                        className="flex-1 px-3 py-2 border-2 border-neutral-200 rounded-sm text-sm focus:border-orange-600 focus:outline-none transition-colors"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeOptionFromField(idx, optIdx)}
+                                                        className="text-neutral-400 hover:text-red-500 transition-colors"
+                                                    >
+                                                        <i className="ri-close-line text-lg" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                type="button"
+                                                onClick={() => addOptionToField(idx)}
+                                                className="text-xs font-bold text-orange-600 hover:text-orange-700 flex items-center gap-1 mt-1"
+                                            >
+                                                <i className="ri-add-line" /> Add Option
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={addCustomField}
+                            className="mt-4 w-full py-3 border-2 border-dashed border-neutral-300 rounded-sm text-sm font-bold text-neutral-500 hover:border-orange-600 hover:text-orange-600 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <i className="ri-add-circle-line text-lg" /> Add Custom Field
+                        </button>
+                    </div>
+
+                    {/* Sponsors */}
+                    <div>
+                        <label className={labelCls}>Sponsors</label>
+                        <p className="text-xs text-neutral-500 mb-4">Add sponsors for this event (optional)</p>
+                        <div className="space-y-4">
+                            {sponsors.map((s, idx) => (
+                                <div key={idx} className="border-2 border-neutral-200 rounded-sm p-4 relative bg-neutral-50">
+                                    <button
+                                        type="button"
+                                        onClick={() => removeSponsor(idx)}
+                                        className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded-sm transition-colors"
+                                        title="Remove sponsor"
+                                    >
+                                        <i className="ri-delete-bin-line text-lg" />
+                                    </button>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-10">
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Sponsor Name <span className="text-orange-600">*</span></label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. Acme Corp"
+                                                value={s.name}
+                                                onChange={(e) => updateSponsor(idx, 'name', e.target.value)}
+                                                className={inputCls}
+                                            />
+                                            {sponsorErrors[idx]?.name && (
+                                                <p className="text-xs text-red-600 mt-1">{sponsorErrors[idx].name}</p>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Logo URL <span className="text-orange-600">*</span></label>
+                                            <input
+                                                type="url"
+                                                placeholder="https://example.com/logo.png"
+                                                value={s.logoUrl}
+                                                onChange={(e) => updateSponsor(idx, 'logoUrl', e.target.value)}
+                                                className={inputCls}
+                                            />
+                                            {sponsorErrors[idx]?.logoUrl && (
+                                                <p className="text-xs text-red-600 mt-1">{sponsorErrors[idx].logoUrl}</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 pr-10">
+                                        <label className="text-xs font-bold text-neutral-600 mb-1 block">Website URL <span className="text-neutral-400 font-normal">(optional)</span></label>
+                                        <input
+                                            type="url"
+                                            placeholder="https://sponsor-website.com"
+                                            value={s.websiteUrl}
+                                            onChange={(e) => updateSponsor(idx, 'websiteUrl', e.target.value)}
+                                            className={inputCls}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={addSponsor}
+                            className="mt-4 w-full py-3 border-2 border-dashed border-neutral-300 rounded-sm text-sm font-bold text-neutral-500 hover:border-orange-600 hover:text-orange-600 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <i className="ri-add-circle-line text-lg" /> Add Sponsor
+                        </button>
+                    </div>
+
+                    {/* Media */}
+                    <div>
+                        <label className={labelCls}>Media</label>
+                        <p className="text-xs text-neutral-500 mb-4">Add images, videos, or sponsor logos for this event (optional)</p>
+                        <div className="space-y-4">
+                            {media.map((m, idx) => (
+                                <div key={idx} className="border-2 border-neutral-200 rounded-sm p-4 relative bg-neutral-50">
+                                    <button
+                                        type="button"
+                                        onClick={() => removeMedia(idx)}
+                                        className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded-sm transition-colors"
+                                        title="Remove media"
+                                    >
+                                        <i className="ri-delete-bin-line text-lg" />
+                                    </button>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-10">
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Media URL <span className="text-orange-600">*</span></label>
+                                            <input
+                                                type="url"
+                                                placeholder="https://example.com/media.jpg"
+                                                value={m.url}
+                                                onChange={(e) => updateMedia(idx, 'url', e.target.value)}
+                                                className={inputCls}
+                                            />
+                                            {mediaErrors[idx]?.url && (
+                                                <p className="text-xs text-red-600 mt-1">{mediaErrors[idx].url}</p>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-neutral-600 mb-1 block">Type</label>
+                                            <select
+                                                value={m.type}
+                                                onChange={(e) => updateMedia(idx, 'type', e.target.value)}
+                                                className={inputCls}
+                                            >
+                                                <option value={MediaType.IMAGE}>Image</option>
+                                                <option value={MediaType.VIDEO}>Video</option>
+                                                <option value={MediaType.SPONSOR_LOGO}>Sponsor Logo</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={addMedia}
+                            className="mt-4 w-full py-3 border-2 border-dashed border-neutral-300 rounded-sm text-sm font-bold text-neutral-500 hover:border-orange-600 hover:text-orange-600 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <i className="ri-add-circle-line text-lg" /> Add Media
+                        </button>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-4 pt-6 border-t-2 border-neutral-100">
+                        <button type="button" onClick={() => navigate(-1)}
+                            className="flex-1 px-6 py-3 bg-white border-2 border-black text-black font-bold text-sm uppercase tracking-widest rounded-sm hover:bg-neutral-100 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                            className="flex-1 px-6 py-3 bg-black border-2 border-black text-white font-bold text-sm uppercase tracking-widest rounded-sm hover:bg-orange-600 hover:border-orange-600 transition-colors">
+                            Create Event
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default CreateEvent;

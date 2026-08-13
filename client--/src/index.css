@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+    --color-primary: oklch(60% 0.18 45);
+    --color-secondary: #1f2937;
+
+    --color-bg-light: #ffffff;
+    --color-text-light: #1f2937;
+
+    --color-success: #22c55e;
+    --color-warning: #f97316;
+    --color-danger: #ef4444;
+}
+
+@layer utilities {
+    .animate-pulse-slow {
+        animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+}
+
+:root {
+    --bg-color: var(--color-bg-light);
+    --text-color: var(--color-text-light);
+}
+
+@font-face {
+    font-family: 'myfont';
+    src: url('/fonts/mysans.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'logofont';
+    src: url('/fonts/organic.regular.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    font-family: 'myfont', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+}
+
+.myfont {
+    font-family: 'myfont', sans-serif;
+}
+
+.logofont {
+    font-family: 'logofont', serif;
+}

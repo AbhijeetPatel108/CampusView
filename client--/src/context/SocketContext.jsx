@@ -1,0 +1,74 @@
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { io } from "socket.io-client";
+import axios from "axios";
+import { API_URL } from "../config/api";
+
+const SocketContext = createContext();
+
+export const useSocket = () => {
+    return useContext(SocketContext);
+};
+
+export const SocketProvider = ({ children }) => {
+    const [socket, setSocket] = useState(null);
+    const [notifications, setNotifications] = useState([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    useEffect(() => {
+        // Only connect if user is logged in
+        const userRole = localStorage.getItem("role");
+        const storedUser = localStorage.getItem("user");
+        const storedAdmin = localStorage.getItem("admin");
+        const userString = storedUser || storedAdmin;
+
+        if (userString && userString !== "undefined") {
+            const user = JSON.parse(userString);
+
+            const newSocket = io(API_URL.replace("/api", ""));
+
+            setSocket(newSocket);
+
+            newSocket.on("connect", () => {
+                console.log("Connected to socket server");
+                // Join their personal room
+                newSocket.emit("join", user._id || user.id);
+            });
+
+            newSocket.on("connect_error", (err) => {
+                // Silently handle socket connection errors when socket server isn't running
+                console.debug("Socket server connect attempt:", err.message);
+            });
+
+            newSocket.on("new-notification", (notification) => {
+                setNotifications((prev) => [notification, ...prev]);
+                setUnreadCount((prev) => prev + 1);
+            });
+
+            if (["member", "club", "facultyCoordinator", "admin", "student"].includes(userRole)) {
+                axios.get(`${API_URL}/api/notifications`)
+                    .then(res => {
+                        setNotifications(res.data);
+                        const unread = res.data.filter(n => !(n.readBy || []).includes(user._id || user.id)).length;
+                        setUnreadCount(unread);
+                    })
+                    .catch(err => console.error("Could not fetch notifications", err));
+            }
+
+            return () => {
+                newSocket.disconnect();
+            };
+        }
+    }, []);
+
+    const value = {
+        socket,
+        notifications,
+        setNotifications,
+        unreadCount,
+        setUnreadCount,
+    };
+
+    return (
+        <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
+    );
+};

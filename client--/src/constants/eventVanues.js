@@ -1,0 +1,16 @@
+export const EVENT_VENUES = [
+  "Student Activity Centre",
+  "MP HALL",
+  "SEMINAR HALL",
+  "Athletics Ground",
+  "Gym Khana Ground",
+  "SAC Ground",
+  "IT building",
+  "Science Block",
+  "Community Center",
+  "NITA Temple",
+  "LT",
+  "Online",
+  "Department Building",
+  "Others",
+];
